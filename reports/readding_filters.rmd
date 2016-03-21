@@ -1,0 +1,123 @@
+---
+title: "tpt.rmd"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(zoo)
+
+setwd('~/spring2016/side_projects/tpt')
+# data <- fread('./data/parsed1.csv')
+load('./data/tpt_sessions.Rdata')
+data <- fread('./data/parsed6.csv')
+
+
+```
+
+```{r}
+# cleaning
+
+setnames(data, names(data), gsub("_", ".", make.names(gsub("\t", "", names(data)))))
+# data[, university.discipline := gsub("\t", "", university.discipline)]
+
+data[, received.at.2 := as.POSIXct(received.at)]
+data[, received.at := received.at.2]
+
+setnames(tpt.sessions, names(tpt.sessions), gsub("_", ".", names(tpt.sessions)))
+  
+```
+
+```{r}
+
+# merging
+
+setkeyv(data, c("anonymous.id", "received.at"))
+data <- unique(data)
+
+setkeyv(tpt.sessions, c("anonymous.id", "received.at"))
+tpt.sessions <- unique(tpt.sessions)
+
+all <- merge(data, tpt.sessions, by = c("anonymous.id", "received.at"))
+all[, received.at.2 := NULL]
+
+```
+
+
+
+```{r}
+
+# Combine columns into one column
+
+all[, 
+    cols.of.filters := paste(
+        "core.domain:", core.domain, 
+        "core.standard:", core.standard, 
+        "grade.level:", grade.level, 
+        "international.baccalaureate:", international.baccalaureate, 
+        "prek.12.subject.area:", prek.12.subject.area, 
+        "price.range:", price.range, 
+        "type.of.resource:", type.of.resource, 
+        "university.discipline:", university.discipline
+    )
+  ]  
+
+# collapse (for my sanity and for readability)
+all <- all[, .(anonymous.id, received.at, search, session.start, session.end, cols.of.filters)]
+
+# length(unique(all$cols.of.filters))/nrow(all)
+# nrow(all)
+# 
+# nrow(unique(all[, .(cols.of.filters, search)]))/nrow(all)
+
+```
+
+```{r}
+
+# all[, search.id := NULL]
+# all[is.na(shift(search, 1)), search.id := as.character(is.na(shift(search, 1))), by = list(anonymous.id, session.start)]
+# all[search != shift(search), search.id := shift(search, 1), by = list(anonymous.id, session.start)]
+# all[1:100, list(anonymous.id, session.start, search.id, search)]
+
+all[, search.id := NULL]
+all[, last.filters := NULL]
+all[, last.search := shift(search), by = list(anonymous.id, session.start)]
+all[is.na(last.search) | (last.search != search), search.id := (1:.N)]
+
+all[, last.filters := shift(cols.of.filters), by = list(anonymous.id, session.start)]
+all[is.na(search.id), last.filters := NA]
+
+all[!is.na(search.id) & is.na(last.filters), last.filters := ""]
+
+all[, search.id := na.locf(search.id)]
+all[, last.filters := na.locf(last.filters)]
+all[last.filters == "", last.filters := NA]
+
+# all[1:100, list(anonymous.id, session.start, search.id, search, last.search)]
+# all[1:100, list(anonymous.id, search.id, nchar(last.filters))]
+
+# excluding searches with no filters
+len.of.empty <- 153 # min(nchar(all$cols.of.filters)) # hardcoding for speed
+pre.num <- all[
+  !is.na(last.filters) & (nchar(last.filters) > len.of.empty), 
+  max(cols.of.filters == last.filters), 
+  by = search.id
+]
+pre.num[, reused := V1]
+
+den <- nrow(pre.num)
+num <- sum(pre.num$reused)
+
+den
+num
+num / den
+
+# find out user stats
+
+```
+
